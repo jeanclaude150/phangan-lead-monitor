@@ -1,4 +1,3 @@
 google-genai
 apify-client
 pydantic
-requests
