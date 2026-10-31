@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Koh Phangan Lead Radar</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Plus Jakarta Sans', sans-serif; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col justify-between p-4 md:p-8">
+
+  <div class="max-w-4xl w-full mx-auto space-y-8">
+    <!-- Header -->
+    <header class="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-800 pb-6 gap-4">
+      <div>
+        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 mb-2">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Production Pipeline
+        </div>
+        <h1 class="text-3xl font-bold tracking-tight text-white">Koh Phangan Lead Radar</h1>
+        <p class="text-sm text-slate-400 mt-1">Autonomous real estate scraper & AI tenant qualification pipeline.</p>
+      </div>
+
+      <!-- Quick Settings Modal Trigger -->
+      <button onclick="toggleSettings()" class="self-start md:self-auto flex items-center gap-2 px-4 py-2 text-xs font-medium bg-slate-900 hover:bg-slate-800 border border-slate-700 rounded-lg text-slate-300 transition">
+        ⚙️ GitHub Settings
+      </button>
+    </header>
+
+    <!-- Token Warning Notification -->
+    <div id="configWarning" class="hidden p-4 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-200 text-sm">
+      ⚠️ <strong>Setup Required:</strong> Click <strong>GitHub Settings</strong> in the top right to configure your GitHub Repo name and Personal Access Token (PAT) so the buttons can trigger the cloud runners.
+    </div>
+
+    <!-- Source Selection Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+      
+      <!-- Facebook Lead Radar (Active) -->
+      <div class="relative flex flex-col justify-between p-6 bg-slate-900 border border-blue-500/30 rounded-2xl shadow-xl hover:border-blue-500/60 transition group">
+        <div>
+          <div class="flex items-center justify-between mb-4">
+            <span class="p-3 bg-blue-600/20 border border-blue-500/30 rounded-xl text-2xl">🌐</span>
+            <span class="text-xs font-bold uppercase tracking-wider text-blue-400 bg-blue-500/10 px-2.5 py-1 rounded-md border border-blue-500/20">Active</span>
+          </div>
+          <h2 class="text-lg font-bold text-white mb-1">Facebook Groups</h2>
+          <p class="text-xs text-slate-400 leading-relaxed">
+            Crawls 27 Koh Phangan community groups for 24h posts, filters landlord ads, and scores tenants via Gemini 3.8.
+          </p>
+        </div>
+        <div class="mt-6 pt-4 border-t border-slate-800">
+          <button id="fbTriggerBtn" onclick="triggerWorkflow('facebook')" class="w-full py-3 px-4 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white text-sm font-semibold rounded-xl shadow-lg shadow-blue-600/20 transition flex items-center justify-center gap-2">
+            🚀 Run Daily Pipeline
+          </button>
+        </div>
+      </div>
+
+      <!-- WhatsApp Leads (Coming Soon) -->
+      <div class="relative flex flex-col justify-between p-6 bg-slate-900/50 border border-slate-800 rounded-2xl opacity-70 cursor-not-allowed">
+        <div>
+          <div class="flex items-center justify-between mb-4">
+            <span class="p-3 bg-emerald-600/10 border border-emerald-500/20 rounded-xl text-2xl">💬</span>
+            <span class="text-xs font-bold uppercase tracking-wider text-slate-500 bg-slate-800 px-2.5 py-1 rounded-md">Coming Soon</span>
+          </div>
+          <h2 class="text-lg font-bold text-slate-300 mb-1">WhatsApp Groups</h2>
+          <p class="text-xs text-slate-500 leading-relaxed">
+            Direct socket listener monitoring real estate chat streams and tenant ISO requests.
+          </p>
+        </div>
+        <div class="mt-6 pt-4 border-t border-slate-800/80">
+          <button disabled class="w-full py-3 px-4 bg-slate-800 text-slate-500 text-sm font-medium rounded-xl cursor-not-allowed">
+            Not Connected
+          </button>
+        </div>
+      </div>
+
+      <!-- Telegram Leads (Coming Soon) -->
+      <div class="relative flex flex-col justify-between p-6 bg-slate-900/50 border border-slate-800 rounded-2xl opacity-70 cursor-not-allowed">
+        <div>
+          <div class="flex items-center justify-between mb-4">
+            <span class="p-3 bg-sky-600/10 border border-sky-500/20 rounded-xl text-2xl">✈️</span>
+            <span class="text-xs font-bold uppercase tracking-wider text-slate-500 bg-slate-800 px-2.5 py-1 rounded-md">Coming Soon</span>
+          </div>
+          <h2 class="text-lg font-bold text-slate-300 mb-1">Telegram Channels</h2>
+          <p class="text-xs text-slate-500 leading-relaxed">
+            Bot worker parsing @PhanganFriends and @phangan_rental feeds for instant inquiries.
+          </p>
+        </div>
+        <div class="mt-6 pt-4 border-t border-slate-800/80">
+          <button disabled class="w-full py-3 px-4 bg-slate-800 text-slate-500 text-sm font-medium rounded-xl cursor-not-allowed">
+            Not Connected
+          </button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Active Execution & Progress Monitor -->
+    <div id="progressContainer" class="hidden bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <h3 id="statusTitle" class="text-sm font-bold text-white flex items-center gap-2">
+            <span class="animate-spin text-blue-400">🌀</span> Initiating Cloud Runner...
+          </h3>
+          <p id="statusSubtitle" class="text-xs text-slate-400 mt-0.5">Contacting GitHub Actions dispatcher</p>
+        </div>
+        <span id="progressPercent" class="text-xs font-mono font-bold text-blue-400">10%</span>
+      </div>
+
+      <!-- Progress Bar Track -->
+      <div class="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden">
+        <div id="progressBar" class="h-full bg-blue-500 transition-all duration-700 ease-out" style="width: 10%;"></div>
+      </div>
+
+      <!-- Console Status Text -->
+      <div class="bg-slate-950 rounded-lg p-3 border border-slate-800/60 font-mono text-[11px] text-slate-400" id="liveLog">
+        [INIT] Task submitted to runner...
+      </div>
+    </div>
+
+    <!-- Outcome Alerts -->
+    <div id="successBox" class="hidden p-5 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-200 space-y-2">
+      <div class="flex items-center gap-2 font-bold text-base text-emerald-400">
+        <span>🎉</span> Workflow Finished Successfully!
+      </div>
+      <p class="text-sm text-emerald-300">
+        The pipeline completed without errors. <strong>Check your inbox</strong> (<span id="notifiedEmail">jeanclaudeomeron@gmail.com</span>) for the formatted lead cards and direct reply links.
+      </p>
+    </div>
+
+    <div id="errorBox" class="hidden p-5 rounded-2xl border border-rose-500/30 bg-rose-500/10 text-rose-200 space-y-2">
+      <div class="flex items-center gap-2 font-bold text-base text-rose-400">
+        <span>❌</span> Workflow Failed
+      </div>
+      <p class="text-xs font-mono text-rose-300" id="errorMessage">
+        An error occurred during execution. Check logs.
+      </p>
+    </div>
+
+  </div>
+
+  <!-- Settings Modal (Local Storage) -->
+  <div id="settingsModal" class="hidden fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+    <div class="bg-slate-900 border border-slate-800 max-w-md w-full rounded-2xl p-6 space-y-4 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <h3 class="font-bold text-white text-base">GitHub Connection</h3>
+        <button onclick="toggleSettings()" class="text-slate-400 hover:text-white">✕</button>
+      </div>
+
+      <div class="space-y-3 text-xs">
+        <div>
+          <label class="block font-semibold text-slate-300 mb-1">GitHub Owner / Organization</label>
+          <input type="text" id="cfgOwner" placeholder="e.g. yanivharel" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white outline-none focus:border-blue-500">
+        </div>
+        <div>
+          <label class="block font-semibold text-slate-300 mb-1">Repository Name</label>
+          <input type="text" id="cfgRepo" placeholder="e.g. lead-tool" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white outline-none focus:border-blue-500">
+        </div>
+        <div>
+          <label class="block font-semibold text-slate-300 mb-1">GitHub Personal Access Token (classic or fine-grained)</label>
+          <input type="password" id="cfgToken" placeholder="ghp_xxxxxxxxxxxx" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white outline-none focus:border-blue-500">
+          <p class="text-[10px] text-slate-500 mt-1">Requires <code>repo</code> or <code>workflow</code> permissions to dispatch runs. Stored safely only in your browser's LocalStorage.</p>
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-2 pt-2">
+        <button onclick="saveSettings()" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-semibold text-xs transition">
+          Save Settings
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="text-center text-xs text-slate-600 mt-8">
+    Koh Phangan Real Estate Radar &bull; Single-Trigger Pipeline
+  </footer>
+
+  <script>
+    const STORAGE_KEY = 'kph_radar_cfg';
+
+    function getSettings() {
+      try {
+        return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
+      } catch (e) {
+        return {};
+      }
+    }
+
+    function checkSettings() {
+      const cfg = getSettings();
+      const warning = document.getElementById('configWarning');
+      if (!cfg.owner || !cfg.repo || !cfg.token) {
+        warning.classList.remove('hidden');
+      } else {
+        warning.classList.add('hidden');
+      }
+    }
+
+    function toggleSettings() {
+      const modal = document.getElementById('settingsModal');
+      modal.classList.toggle('hidden');
+      if (!modal.classList.contains('hidden')) {
+        const cfg = getSettings();
+        document.getElementById('cfgOwner').value = cfg.owner || '';
+        document.getElementById('cfgRepo').value = cfg.repo || '';
+        document.getElementById('cfgToken').value = cfg.token || '';
+      }
+    }
+
+    function saveSettings() {
+      const owner = document.getElementById('cfgOwner').value.trim();
+      const repo = document.getElementById('cfgRepo').value.trim();
+      const token = document.getElementById('cfgToken').value.trim();
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ owner, repo, token }));
+      toggleSettings();
+      checkSettings();
+    }
+
+    async function triggerWorkflow(channel) {
+      const cfg = getSettings();
+      if (!cfg.owner || !cfg.repo || !cfg.token) {
+        toggleSettings();
+        return;
+      }
+
+      const fbBtn = document.getElementById('fbTriggerBtn');
+      const progressContainer = document.getElementById('progressContainer');
+      const progressBar = document.getElementById('progressBar');
+      const progressPercent = document.getElementById('progressPercent');
+      const statusTitle = document.getElementById('statusTitle');
+      const statusSubtitle = document.getElementById('statusSubtitle');
+      const liveLog = document.getElementById('liveLog');
+      const successBox = document.getElementById('successBox');
+      const errorBox = document.getElementById('errorBox');
+
+      // Reset state
+      fbBtn.disabled = true;
+      fbBtn.classList.add('opacity-50', 'cursor-not-allowed');
+      successBox.classList.add('hidden');
+      errorBox.classList.add('hidden');
+      progressContainer.classList.remove('hidden');
+
+      progressBar.style.width = '15%';
+      progressPercent.innerText = '15%';
+      statusTitle.innerHTML = '<span class="animate-spin text-blue-400">🌀</span> Dispatching GitHub Action...';
+      statusSubtitle.innerText = 'Triggering run_pipeline.yml via GitHub REST API';
+      liveLog.innerText = `[POST] https://api.github.com/repos/${cfg.owner}/${cfg.repo}/actions/workflows/run_pipeline.yml/dispatches`;
+
+      try {
+        // Trigger workflow dispatch
+        const dispatchRes = await fetch(`https://api.github.com/repos/${cfg.owner}/${cfg.repo}/actions/workflows/run_pipeline.yml/dispatches`, {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/vnd.github+json',
+            'Authorization': `Bearer ${cfg.token}`,
+            'X-GitHub-Api-Version': '2022-11-28'
+          },
+          body: JSON.stringify({ ref: 'main' })
+        });
+
+        if (!dispatchRes.ok) {
+          const errData = await dispatchRes.json();
+          throw new Error(errData.message || `Dispatch returned HTTP ${dispatchRes.status}`);
+        }
+
+        liveLog.innerText = '[OK] Dispatch accepted. Waiting for runner assignment...';
+        progressBar.style.width = '30%';
+        progressPercent.innerText = '30%';
+
+        // Poll for active run
+        await new Promise(r => setTimeout(r, 4000));
+        let runId = null;
+
+        for (let attempt = 0; attempt < 8; attempt++) {
+          const runsRes = await fetch(`https://api.github.com/repos/${cfg.owner}/${cfg.repo}/actions/runs?per_page=1`, {
+            headers: {
+              'Accept': 'application/vnd.github+json',
+              'Authorization': `Bearer ${cfg.token}`
+            }
+          });
+          if (runsRes.ok) {
+            const data = await runsRes.json();
+            if (data.workflow_runs && data.workflow_runs.length > 0) {
+              runId = data.workflow_runs[0].id;
+              break;
+            }
+          }
+          await new Promise(r => setTimeout(r, 2000));
+        }
+
+        if (!runId) {
+          throw new Error('Pipeline dispatched, but could not track runner ID. Check GitHub Actions tab.');
+        }
+
+        statusTitle.innerHTML = '<span class="animate-spin text-blue-400">⚡</span> Scraper & AI Runner Active';
+        statusSubtitle.innerText = `Tracking GitHub Action Run #${runId}`;
+
+        // Simulated progressive steps while polling GitHub status
+        let pollCount = 0;
+        const interval = setInterval(async () => {
+          pollCount++;
+          const checkRes = await fetch(`https://api.github.com/repos/${cfg.owner}/${cfg.repo}/actions/runs/${runId}`, {
+            headers: {
+              'Accept': 'application/vnd.github+json',
+              'Authorization': `Bearer ${cfg.token}`
+            }
+          });
+
+          if (!checkRes.ok) return;
+          const runStatus = await checkRes.json();
+
+          if (pollCount <= 4) {
+            progressBar.style.width = '45%';
+            progressPercent.innerText = '45%';
+            liveLog.innerText = `[SCRAPING] Apify actor scanning 27 groups (Limit: 20, 24h filter)...`;
+          } else if (pollCount <= 8) {
+            progressBar.style.width = '70%';
+            progressPercent.innerText = '70%';
+            liveLog.innerText = `[PRE-FILTER] Dropping seller posts locally & batching candidates to Gemini...`;
+          } else {
+            progressBar.style.width = '90%';
+            progressPercent.innerText = '90%';
+            liveLog.innerText = `[EVALUATION] Gemini screening tenant inquiries & assembling email report...`;
+          }
+
+          if (runStatus.status === 'completed') {
+            clearInterval(interval);
+            fbBtn.disabled = false;
+            fbBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+
+            if (runStatus.conclusion === 'success') {
+              progressBar.style.width = '100%';
+              progressPercent.innerText = '100%';
+              progressContainer.classList.add('hidden');
+              successBox.classList.remove('hidden');
+            } else {
+              progressContainer.classList.add('hidden');
+              errorBox.classList.remove('hidden');
+              document.getElementById('errorMessage').innerText = `GitHub Runner concluded with status: ${runStatus.conclusion}. Check the Actions log in GitHub for details.`;
+            }
+          }
+        }, 5000);
+
+      } catch (err) {
+        fbBtn.disabled = false;
+        fbBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+        progressContainer.classList.add('hidden');
+        errorBox.classList.remove('hidden');
+        document.getElementById('errorMessage').innerText = err.message || err;
+      }
+    }
+
+    // Init check
+    checkSettings();
+  </script>
+</body>
+</html>
