@@ -1,325 +1,336 @@
+#!/usr/bin/env python3
+"""
+Koh Phangan Rental Lead Scanner (monitor.py)
+Scrapes target Facebook groups via Apify, filters rental listings using Gemini,
+and dispatches an alert email digest via Resend.
+"""
+
 import os
-import re
+import sys
 import json
-import time
-from datetime import datetime, timezone, timedelta
+import logging
+import argparse
+from pathlib import Path
+from datetime import datetime
+from typing import List, Dict, Any, Optional
+
 from apify_client import ApifyClient
 from google import genai
 from google.genai import types
-from pydantic import BaseModel, Field
-from typing import List, Optional
+import resend
 
-# ----------------- 1. CONFIG & CREDENTIALS -----------------
-APIFY_API_TOKEN = os.getenv("APIFY_API_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-RESEND_API_KEY = os.getenv("RESEND_API_KEY")
-REPORT_EMAIL_TO = os.getenv("REPORT_EMAIL_TO", "jeanclaudeomeron@gmail.com")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("phangan-monitor")
 
-if not APIFY_API_TOKEN or not GEMINI_API_KEY:
-    raise ValueError("Missing APIFY_API_TOKEN or GEMINI_API_KEY environment variables!")
+# --- Configuration & Defaults ---
+APIFY_ACTOR_ID = "apify/facebook-groups-scraper"
+DEFAULT_CACHE_FILE = Path("scraped_posts_cache.json")
+DEFAULT_MAX_POSTS_PER_GROUP = 20
 
-apify_client = ApifyClient(APIFY_API_TOKEN)
-ai_client = genai.Client(api_key=GEMINI_API_KEY)
-
-# Active supported models with graceful fallback
-MODEL_CANDIDATES = [
-    "gemini-3.8-flash",
-    "gemini-3.5-flash-lite",
-    "gemini-3.6-flash"
-]
-
+# Koh Phangan Group targets (add or modify group URLs here)
 TARGET_GROUPS = [
-    "https://www.facebook.com/share/g/1H3kfwcedc/",
-    "https://www.facebook.com/share/g/1E4B29pfNQ/",
-    "https://www.facebook.com/share/g/1bpzE1TPGs/",
-    "https://www.facebook.com/share/g/1GRSz7thgg/",
-    "https://www.facebook.com/share/g/1FShqFuiK6/",
-    "https://www.facebook.com/share/g/1KgCDeNmwr/",
-    "https://www.facebook.com/share/g/1F8RpMbsKH/",
-    "https://www.facebook.com/share/g/1MHpTuebRc/",
-    "https://www.facebook.com/share/g/1CQwXhSYoC/",
     "https://www.facebook.com/groups/1220487088900101/",
-    "https://www.facebook.com/share/g/1E1rtUvLfV/",
-    "https://www.facebook.com/share/g/1DYeuoRafj/",
-    "https://www.facebook.com/share/g/1EtCDMcLJA/",
-    "https://www.facebook.com/share/g/1FDBixkSVE/",
-    "https://www.facebook.com/share/g/1CrKqPsbSs/",
-    "https://www.facebook.com/share/g/1J6QnQBWMu/",
-    "https://www.facebook.com/share/g/1Dk9Z7PP6C/",
-    "https://www.facebook.com/share/g/1ZZkGHBwwp/",
-    "https://www.facebook.com/share/g/1MNnZCTotc/",
-    "https://www.facebook.com/share/g/1K9SBNoCmE/",
-    "https://www.facebook.com/share/g/19jMLi1nXR/",
-    "https://www.facebook.com/share/g/1BXmRFS45J/",
-    "https://www.facebook.com/share/g/1Jr7JUrsw7/",
-    "https://www.facebook.com/share/g/14mjdRXMAVG/",
-    "https://www.facebook.com/share/g/1BmrnLGsff/",
-    "https://www.facebook.com/share/g/19ttApseXv/",
-    "https://www.facebook.com/share/g/1Mr7GVvsTD/",
-    "https://www.facebook.com/share/g/1EgVmuFSbz/",
     "https://www.facebook.com/share/g/1DWFxdTZGt/",
-    "https://www.facebook.com/share/g/19pCCRFs6U/"
+    "https://www.facebook.com/share/g/1FDBixkSVE/",
+    "https://www.facebook.com/share/g/1E1rtUvLfV/",
+    "https://www.facebook.com/share/g/1MNnZCTotc/",
+    "https://www.facebook.com/share/g/1DYeuoRafj/",
+    "https://www.facebook.com/share/g/1CrKqPsbSs/",
+    "https://www.facebook.com/share/g/1EgVmuFSbz/",
+    "https://www.facebook.com/share/g/14mjdRXMAVG/",
+    "https://www.facebook.com/share/g/1KgCDeNmwr/",
+    "https://www.facebook.com/share/g/1E4B29pfNQ/",
+    "https://www.facebook.com/share/g/1FShqFuiK6/",
+    "https://www.facebook.com/share/g/1H3kfwcedc/",
+    "https://www.facebook.com/share/g/1bpzE1TPGs/",
+    "https://www.facebook.com/share/g/1Jr7JUrsw7/",
+    "https://www.facebook.com/share/g/1BXmRFS45J/",
+    "https://www.facebook.com/share/g/1J6QnQBWMu/",
+    "https://www.facebook.com/share/g/1GRSz7thgg/",
+    "https://www.facebook.com/share/g/1EtCDMcLJA/",
+    "https://www.facebook.com/share/g/19jMLi1nXR/",
+    "https://www.facebook.com/share/g/19ttApseXv/",
+    "https://www.facebook.com/share/g/1CQwXhSYoC/",
+    "https://www.facebook.com/share/g/1Mr7GVvsTD/",
 ]
 
-SAMPLE_LIMIT_PER_GROUP = 20
 
-# ----------------- 2. DATA SCHEMAS -----------------
-class QualifiedLead(BaseModel):
-    post_index: int = Field(description="The index number of the post.")
-    summary: str = Field(description="1-line summary of what the tenant is seeking.")
-    duration: Optional[str] = Field(default=None, description="Stated rental period.")
-    budget: Optional[str] = Field(default=None, description="Budget in THB or other currency.")
-    move_in_date: Optional[str] = Field(default=None, description="Move-in timeframe.")
-    contact_phone: Optional[str] = Field(default=None, description="Phone or WhatsApp number if stated.")
+def resolve_dataset_id(run_obj: Any) -> str:
+    """
+    Safely retrieves the defaultDatasetId from Apify Run objects or dicts.
+    Handles 'Run' model instances as well as legacy dict responses.
+    """
+    if hasattr(run_obj, "default_dataset_id") and run_obj.default_dataset_id:
+        return run_obj.default_dataset_id
+    if hasattr(run_obj, "defaultDatasetId") and run_obj.defaultDatasetId:
+        return run_obj.defaultDatasetId
+    if isinstance(run_obj, dict):
+        return run_obj.get("defaultDatasetId") or run_obj.get("default_dataset_id")
+    raise ValueError(f"Could not extract default dataset ID from Run representation: {type(run_obj)}")
 
-class BatchEvaluationResponse(BaseModel):
-    qualified_leads: List[QualifiedLead] = Field(
-        default_factory=list,
-        description="List of qualified leads (tenants seeking 1+ month rentals). Return empty list if none match."
-    )
 
-# ----------------- 3. ZERO-TOKEN HEURISTIC FILTER -----------------
-def is_potential_tenant(text: str) -> bool:
-    lower = text.lower()
-    strict_seller_signals = [
-        "available from", "for rent:", "villa for rent", "house for rent",
-        "fully furnished with pool", "per day", "per night", "pm for price",
-        "inbox for details"
-    ]
-    if any(sig in lower for sig in strict_seller_signals) and "looking for" not in lower:
-        return False
-        
-    tenant_signals = [
-        "looking for", "searching for", "seeking", "anyone know", 
-        "need a house", "need a villa", "need an apartment", "budget", 
-        "long term", "month", "january", "february", "march", "thb/month", 
-        "thb", "pool villa"
-    ]
-    return any(sig in lower for sig in tenant_signals)
+def fetch_posts(
+    apify_client: ApifyClient,
+    run_id: Optional[str] = None,
+    use_cache: bool = False,
+    cache_path: Path = DEFAULT_CACHE_FILE,
+    max_posts: int = DEFAULT_MAX_POSTS_PER_GROUP,
+) -> List[Dict[str, Any]]:
+    """
+    Retrieves scraped posts from local cache, an existing Apify run, or a fresh scrape.
+    """
+    # 1. Check local file cache
+    if use_cache and cache_path.exists():
+        logger.info(f"Loading posts from local cache: {cache_path}")
+        with open(cache_path, "r", encoding="utf-8") as f:
+            return json.load(f)
 
-# ----------------- 4. 24-HOUR TIMESTAMP CHECK -----------------
-def is_within_last_24_hours(item: dict) -> bool:
-    raw_time = item.get("time") or item.get("timestamp") or item.get("createdAt")
-    if not raw_time:
-        return True
-    
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    # 2. Existing run ID bypass (no new scraper cost)
+    if run_id:
+        logger.info(f"Connecting to existing Apify run: {run_id}")
+        run = apify_client.run(run_id).get()
+        dataset_id = resolve_dataset_id(run)
+    else:
+        # 3. New fresh scraper run
+        logger.info(f"Starting fresh Apify scrape for {len(TARGET_GROUPS)} groups (limit: {max_posts})...")
+        run_input = {
+            "startUrls": [{"url": url} for url in TARGET_GROUPS],
+            "resultsLimit": max_posts,
+            "maxPosts": max_posts,
+        }
+        run = apify_client.actor(APIFY_ACTOR_ID).call(run_input=run_input)
+        dataset_id = resolve_dataset_id(run)
+
+    logger.info(f"Retrieving items from Apify dataset: {dataset_id}")
+    dataset_client = apify_client.dataset(dataset_id)
+    items = list(dataset_client.iterate_items())
+
+    # Update local cache for subsequent rapid iterations
     try:
-        if isinstance(raw_time, (int, float)):
-            post_time = datetime.fromtimestamp(raw_time, tz=timezone.utc)
-            return post_time >= cutoff
-        elif isinstance(raw_time, str):
-            clean_time_str = raw_time.replace("Z", "+00:00")
-            post_time = datetime.fromisoformat(clean_time_str)
-            return post_time >= cutoff
-    except Exception:
-        return True
-    return True
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump(items, f, ensure_ascii=False, indent=2)
+        logger.info(f"Cached {len(items)} items to {cache_path}")
+    except IOError as e:
+        logger.warning(f"Failed to cache items locally: {e}")
 
-# ----------------- 5. RESILIENT GEMINI EVALUATOR -----------------
-def call_gemini_resilient(prompt: str) -> BatchEvaluationResponse:
-    last_exception = None
-    for model_name in MODEL_CANDIDATES:
-        for attempt in range(1, 4):
-            try:
-                response = ai_client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        response_schema=BatchEvaluationResponse,
-                    )
-                )
-                return BatchEvaluationResponse.model_validate_json(response.text)
-            except Exception as e:
-                last_exception = e
-                err_text = str(e)
-                if "503" in err_text or "UNAVAILABLE" in err_text or "429" in err_text:
-                    wait_time = attempt * 4
-                    print(f"[{model_name}] Busy/503. Backing off {wait_time}s (attempt {attempt}/3)...")
-                    time.sleep(wait_time)
-                else:
-                    break
-        print(f"[{model_name}] Shifting to next candidate model...")
-    raise last_exception
+    return items
 
-def evaluate_candidates(candidates: list) -> List[QualifiedLead]:
-    if not candidates:
-        return []
+
+def filter_leads_with_gemini(posts: List[Dict[str, Any]], gemini_api_key: str) -> List[Dict[str, Any]]:
+    """
+    Uses Gemini 2.5 Flash to batch evaluate posts and isolate rental opportunities.
+    """
+    client = genai.Client(api_key=gemini_api_key)
+
+    # Clean and consolidate posts into lightweight text payloads
+    cleaned_posts = []
+    for idx, post in enumerate(posts):
+        text = post.get("text") or post.get("postText") or post.get("message") or ""
+        url = post.get("url") or post.get("postUrl") or post.get("canonicalUrl") or ""
+        time_str = post.get("time") or post.get("timestamp") or ""
         
-    all_leads = []
-    BATCH_SIZE = 10
-    total_batches = (len(candidates) + BATCH_SIZE - 1) // BATCH_SIZE
-    
-    for idx, i in enumerate(range(0, len(candidates), BATCH_SIZE), 1):
-        batch = candidates[i:i + BATCH_SIZE]
-        print(f"Evaluating candidate batch {idx}/{total_batches} ({len(batch)} posts)...")
-        
-        prompt_payload = json.dumps([
-            {"index": c["post_index"], "text": c["text"]} for c in batch
-        ], indent=2)
-
-        prompt = f"""
-        You are an expert real estate lead screener for Koh Phangan rentals.
-        Evaluate the following batch of posts. Identify genuine TENANTS looking for accommodation for 1 month or longer.
-
-        STRICT RULES:
-        - Include ONLY if the author is a prospective tenant seeking a rental for 1+ months.
-        - Exclude landlords, room offerings, agents, and daily holiday tourists.
-        - If none match, return an empty array for qualified_leads.
-
-        Posts:
-        {prompt_payload}
-        """
-
-        try:
-            result = call_gemini_resilient(prompt)
-            all_leads.extend(result.qualified_leads)
-        except Exception as e:
-            print(f"Error during AI evaluation batch {idx}: {e}")
-            
-        time.sleep(1.5)
-            
-    return all_leads
-
-# ----------------- 6. EMAIL REPORTING -----------------
-def send_email_report(leads: list, total_scraped: int):
-    if not RESEND_API_KEY:
-        print("[Notice] RESEND_API_KEY not configured. Skipping email dispatch.")
-        return
-
-    import resend
-    resend.api_key = RESEND_API_KEY
-
-    today_str = datetime.now().strftime("%d %b %Y")
-    subject = f"Koh Phangan Rental Radar: {len(leads)} New Lead(s) [{today_str}]"
-    
-    cards = []
-    for lead in leads:
-        contact_line = f"<p style='margin:4px 0; color:#2563eb; font-size:14px;'><strong>Contact:</strong> {lead['contact_phone']}</p>" if lead.get('contact_phone') else ""
-        card = f"""
-        <div style='background-color:#ffffff; border:1px solid #e2e8f0; border-radius:8px; padding:18px; margin-bottom:16px;'>
-            <div style='font-size:16px; font-weight:600; color:#1e293b; margin-bottom:8px;'>User: {lead['author']}</div>
-            <p style='margin:4px 0; color:#334155; font-size:14px;'><strong>Summary:</strong> {lead['summary']}</p>
-            <p style='margin:4px 0; color:#334155; font-size:14px;'><strong>Duration:</strong> {lead['duration'] or 'Not specified'}</p>
-            <p style='margin:4px 0; color:#334155; font-size:14px;'><strong>Budget:</strong> <span style='color:#059669; font-weight:600;'>{lead['budget'] or 'Not specified'}</span></p>
-            <p style='margin:4px 0; color:#334155; font-size:14px;'><strong>Move-in:</strong> {lead['move_in_date'] or 'Not specified'}</p>
-            {contact_line}
-            <div style='margin-top:14px;'>
-                <a href='{lead['url']}' target='_blank' style='display:inline-block; background-color:#2563eb; color:#ffffff; text-decoration:none; padding:8px 16px; border-radius:6px; font-size:13px; font-weight:500;'>Open & Reply to Post</a>
-            </div>
-        </div>
-        """
-        cards.append(card)
-
-    lead_cards_html = "".join(cards)
-    html_content = (
-        "<!DOCTYPE html><html><head><meta charset='utf-8'></head>"
-        "<body style='font-family:-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif; background-color:#f8fafc; margin:0; padding:24px;'>"
-        "<div style='max-width:620px; margin:0 auto;'>"
-        "<div style='background-color:#0f172a; color:#ffffff; padding:20px 24px; border-radius:8px 8px 0 0;'>"
-        "<h2 style='margin:0; font-size:20px;'>Koh Phangan Lead Monitor</h2>"
-        f"<p style='margin:6px 0 0 0; font-size:13px; color:#94a3b8;'>Daily Scan: {total_scraped} posts checked across {len(TARGET_GROUPS)} groups &bull; {len(leads)} qualified lead(s)</p>"
-        "</div>"
-        f"<div style='padding:24px 0;'>{lead_cards_html}</div>"
-        "</div></body></html>"
-    )
-
-    try:
-        resend.Emails.send({
-            "from": "onboarding@resend.dev",
-            "to": REPORT_EMAIL_TO,
-            "subject": subject,
-            "html": html_content
-        })
-        print(f"Daily report emailed successfully to {REPORT_EMAIL_TO} via Resend!")
-    except Exception as e:
-        print(f"Resend delivery failed: {e}")
-
-# ----------------- 7. MAIN EXECUTION -----------------
-def main():
-    print(f"--- 1. Initiating Apify scrape for {len(TARGET_GROUPS)} groups (Limit: {SAMPLE_LIMIT_PER_GROUP} each) ---")
-    
-    run_input = {
-        "startUrls": [{"url": url} for url in TARGET_GROUPS],
-        "resultsLimit": SAMPLE_LIMIT_PER_GROUP,
-        "viewOption": "CHRONOLOGICAL",
-        "maxRequestRetries": 1,
-        "maxConcurrency": 10
-    }
-
-    if os.path.exists("cookies.json"):
-        try:
-            with open("cookies.json", "r", encoding="utf-8") as f:
-                run_input["cookies"] = json.load(f)
-            print("[Info] cookies.json detected and injected into scraper.")
-        except Exception as e:
-            print(f"[Warning] Failed to load cookies.json: {e}")
-
-    run = apify_client.actor("apify/facebook-groups-scraper").call(run_input=run_input)
-    items = list(apify_client.dataset(run["defaultDatasetId"]).iterate_items())
-    print(f"Scrape completed! Total posts collected: {len(items)}\n")
-
-    candidates = []
-    filtered_seller_ads = 0
-    filtered_older_than_24h = 0
-
-    for idx, item in enumerate(items, 1):
-        if not is_within_last_24_hours(item):
-            filtered_older_than_24h += 1
+        if len(text.strip()) < 20:  # Skip empty or negligible posts
             continue
 
-        text = item.get("text") or item.get("message") or item.get("postText") or ""
-        url = item.get("url") or item.get("postUrl", "N/A")
-        author = item.get("user", {}).get("name") or item.get("authorName", "Unknown")
-        
-        if len(text.strip()) >= 15 and is_potential_tenant(text):
-            candidates.append({
-                "post_index": idx,
-                "author": author,
-                "url": url,
-                "text": text.strip()
+        cleaned_posts.append({
+            "id": idx,
+            "text": text[:1500],  # Truncate overly long text
+            "url": url,
+            "timestamp": time_str
+        })
+
+    if not cleaned_posts:
+        logger.info("No substantial posts found to evaluate.")
+        return []
+
+    logger.info(f"Evaluating {len(cleaned_posts)} candidate posts with Gemini...")
+
+    prompt = (
+        "You are an assistant filtering Koh Phangan real estate leads.\n"
+        "Analyze the following list of Facebook group posts and identify properties available for rent.\n"
+        "Filter for house, villa, bungalow, or apartment rentals (especially long-term or monthly).\n"
+        "Exclude: 'ISO/Looking for' posts (people seeking rentals), general spam, services, scooter rentals, and sales.\n\n"
+        "Return a pure JSON list of objects matching this schema:\n"
+        "[\n"
+        "  {\n"
+        "    \"post_id\": <integer id matching input>,\n"
+        "    \"is_rental_listing\": true,\n"
+        "    \"summary\": \"concise description of the property, bedrooms, location\",\n"
+        "    \"price_thb\": \"monthly price if specified or 'Unknown'\",\n"
+        "    \"location\": \"specific Koh Phangan area (e.g. Sri Thanu, Hin Kong, Thong Sala, Haad Salad) if mentioned or 'Unspecified'\"\n"
+        "  }\n"
+        "]\n\n"
+        f"Input Posts:\n{json.dumps(cleaned_posts, ensure_ascii=False)}"
+    )
+
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            temperature=0.1,
+        ),
+    )
+
+    try:
+        evaluations = json.loads(response.text)
+    except json.JSONDecodeError as err:
+        logger.error(f"Failed to parse Gemini JSON output: {err}\nResponse: {response.text}")
+        return []
+
+    leads = []
+    eval_map = {item["post_id"]: item for item in evaluations if item.get("is_rental_listing")}
+
+    for post in cleaned_posts:
+        if post["id"] in eval_map:
+            meta = eval_map[post["id"]]
+            leads.append({
+                "url": post["url"],
+                "text": post["text"],
+                "summary": meta.get("summary", "N/A"),
+                "price": meta.get("price_thb", "Unknown"),
+                "location": meta.get("location", "Unspecified"),
+                "timestamp": post["timestamp"]
             })
-        else:
-            filtered_seller_ads += 1
 
-    print(f"Filters applied: {filtered_older_than_24h} discarded (> 24h old), {filtered_seller_ads} discarded (seller ads / spam).")
-    print(f"Candidate pool: {len(candidates)} posts passed to Gemini.\n")
+    logger.info(f"Isolated {len(leads)} valid rental leads.")
+    return leads
 
-    qualified_results = evaluate_candidates(candidates)
-    
-    candidates_map = {c["post_index"]: c for c in candidates}
-    leads_to_report = []
-    
-    print("=" * 60)
-    if not qualified_results:
-        print("No qualified long-term tenant leads found across any of the groups.")
+
+def send_email_digest(leads: List[Dict[str, Any]], resend_api_key: str, recipient_email: str) -> None:
+    """
+    Sends an HTML report via Resend with the detected rental listings.
+    """
+    if not leads:
+        logger.info("No matching leads found. Skipping email alert.")
+        return
+
+    resend.api_key = resend_api_key
+
+    rows_html = ""
+    for lead in leads:
+        url = lead["url"] or "#"
+        rows_html += f"""
+        <tr style="border-bottom: 1px solid #e5e7eb;">
+            <td style="padding: 12px; font-weight: bold; color: #111827;">{lead['location']}</td>
+            <td style="padding: 12px; color: #047857; font-weight: 600;">{lead['price']}</td>
+            <td style="padding: 12px; color: #374151;">
+                <div>{lead['summary']}</div>
+                <div style="margin-top: 6px;">
+                    <a href="{url}" style="color: #2563eb; text-decoration: underline; font-size: 13px;" target="_blank">View Post</a>
+                </div>
+            </td>
+        </tr>
+        """
+
+    html_content = f"""
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 700px; margin: auto; padding: 20px;">
+        <h2 style="color: #1f2937; margin-bottom: 8px;">Koh Phangan Rental Leads Report</h2>
+        <p style="color: #6b7280; font-size: 14px; margin-top: 0;">Found {len(leads)} active listings from target Facebook groups.</p>
+        
+        <table style="width: 100%; border-collapse: collapse; margin-top: 16px; text-align: left; font-size: 14px;">
+            <thead>
+                <tr style="background-color: #f3f4f6; color: #374151;">
+                    <th style="padding: 10px;">Area</th>
+                    <th style="padding: 10px;">Price</th>
+                    <th style="padding: 10px;">Details & Link</th>
+                </tr>
+            </thead>
+            <tbody>
+                {rows_html}
+            </tbody>
+        </table>
+        
+        <footer style="margin-top: 24px; font-size: 12px; color: #9ca3af;">
+            Generated automatically by Koh Phangan Lead Monitor • {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}
+        </footer>
+    </div>
+    """
+
+    params = {
+        "from": os.getenv("EMAIL_SENDER", "onboarding@resend.dev"),
+        "to": [recipient_email],
+        "subject": f"🌴 {len(leads)} New Koh Phangan Rental Leads ({datetime.now().strftime('%d %b')})",
+        "html": html_content,
+    }
+
+    try:
+        email = resend.Emails.send(params)
+        logger.info(f"Digest email sent successfully. ID: {email.get('id') if isinstance(email, dict) else email}")
+    except Exception as e:
+        logger.error(f"Failed to dispatch email via Resend: {e}")
+
+
+def parse_arguments():
+    parser = argparse.ArgumentParser(description="Koh Phangan Facebook Rental Lead Monitor")
+    parser.add_argument(
+        "--use-cache",
+        action="store_true",
+        help="Skip API calls and use the local JSON cache file if present."
+    )
+    parser.add_argument(
+        "--run-id",
+        type=str,
+        default=None,
+        help="Fetch items directly from an existing Apify run ID instead of launching a new scrape."
+    )
+    parser.add_argument(
+        "--cache-file",
+        type=Path,
+        default=DEFAULT_CACHE_FILE,
+        help=f"Path to local JSON cache file (default: {DEFAULT_CACHE_FILE})"
+    )
+    parser.add_argument(
+        "--max-posts",
+        type=int,
+        default=DEFAULT_MAX_POSTS_PER_GROUP,
+        help="Max posts to pull per group when running a fresh scrape."
+    )
+    return parser.parse_args()
+
+
+def main():
+    args = parse_arguments()
+
+    apify_token = os.getenv("APIFY_TOKEN")
+    gemini_api_key = os.getenv("GEMINI_API_KEY")
+    resend_api_key = os.getenv("RESEND_API_KEY")
+    recipient_email = os.getenv("NOTIFICATION_EMAIL")
+
+    if not apify_token and not (args.use_cache and args.cache_file.exists()):
+        logger.error("Missing APIFY_TOKEN environment variable.")
+        sys.exit(1)
+
+    if not gemini_api_key:
+        logger.error("Missing GEMINI_API_KEY environment variable.")
+        sys.exit(1)
+
+    apify_client = ApifyClient(apify_token) if apify_token else None
+
+    # Step 1: Ingest raw post items (Cached, existing run, or fresh scrape)
+    raw_posts = fetch_posts(
+        apify_client=apify_client,
+        run_id=args.run_id,
+        use_cache=args.use_cache,
+        cache_path=args.cache_file,
+        max_posts=args.max_posts,
+    )
+    logger.info(f"Loaded {len(raw_posts)} total posts for processing.")
+
+    # Step 2: AI filtration and extraction
+    leads = filter_leads_with_gemini(raw_posts, gemini_api_key)
+
+    # Step 3: Notification dispatch
+    if resend_api_key and recipient_email:
+        send_email_digest(leads, resend_api_key, recipient_email)
     else:
-        print(f"FOUND {len(qualified_results)} QUALIFIED LEAD(S):\n")
-        for q in qualified_results:
-            post_data = candidates_map.get(q.post_index, {})
-            lead_item = {
-                "author": post_data.get("author", "Unknown"),
-                "url": post_data.get("url", "https://facebook.com"),
-                "summary": q.summary,
-                "duration": q.duration,
-                "budget": q.budget,
-                "move_in_date": q.move_in_date,
-                "contact_phone": q.contact_phone
-            }
-            leads_to_report.append(lead_item)
-            
-            print(f"Author:   {lead_item['author']}")
-            print(f"Summary:  {lead_item['summary']}")
-            print(f"Budget:   {lead_item['budget'] or 'Not specified'}")
-            print(f"Move-in:  {lead_item['move_in_date'] or 'Not specified'}")
-            print(f"Duration: {lead_item['duration'] or 'Not specified'}")
-            print(f"Link:     {lead_item['url']}")
-            print("-" * 50)
-    print("=" * 60)
+        logger.warning("RESEND_API_KEY or NOTIFICATION_EMAIL not set. Dumping leads to console:")
+        print(json.dumps(leads, indent=2, ensure_ascii=False))
 
-    if leads_to_report:
-        send_email_report(leads_to_report, total_scraped=len(items))
 
 if __name__ == "__main__":
     main()
